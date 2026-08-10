@@ -76,7 +76,10 @@ def make_panel(n_items: int = 5, n_stores: int = 2, n_days: int = 730,
                 "day_index": np.arange(n_days),
                 "sales": series,
             }))
-    return pd.concat(rows, ignore_index=True)
+    result = pd.concat(rows, ignore_index=True)
+    result["series_id"] = (result["store_id"].astype(str) + "__"
+                           + result["item_id"].astype(str))
+    return result
 
 
 if __name__ == "__main__":
