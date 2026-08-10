@@ -63,11 +63,12 @@ def add_features(panel: pd.DataFrame, value_col: str = "sales",
         # shift(1) first so the window ends the day BEFORE the target (no leak)
         df[f"roll_mean_{w}"] = g.shift(1).rolling(w).mean().reset_index(level=0, drop=True)
 
-    # Calendar features
-    if "wday" not in df.columns:
-        df["wday"] = df["date"].dt.weekday + 1
-    if "month" not in df.columns:
-        df["month"] = df["date"].dt.month
+    # Calendar features — always recomputed from the date so future rows (whose
+    # wday/month may be missing or NaN) get correct values. Recomputing is cheap
+    # and avoids the bug where an existing-but-NaN column silently disables the
+    # feature and forces a fallback.
+    df["wday"] = df["date"].dt.weekday + 1
+    df["month"] = df["date"].dt.month
     df["snap"] = _state_snap_column(df)
     return df
 

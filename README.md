@@ -21,7 +21,7 @@ lend), uplift (estimate effect → target), and here demand (forecast → stock)
 |---|---|---|
 | Data pipeline | `src/m5_data.py` | Load M5, subset by category/store, reshape wide→long, join calendar, audit |
 | Baselines | `src/baselines.py` | Naive, seasonal-naive, moving-average — the benchmarks to beat |
-| Metrics | `src/metrics.py` | MAE, RMSE, and **RMSSE** (the official M5 scaled error) |
+| Metrics | `src/metrics.py` | MAE, RMSE, and **RMSSE** (M5's per-series scaled error; full WRMSSE with dollar weights not computed) |
 | Backtesting | `src/backtest.py` | **Rolling-origin** evaluation with no leakage |
 | Global model | `src/global_model.py` | One gradient-boosted model across all series, causal lag features |
 | Prediction intervals | `src/intervals.py` | Residual-quantile + split-conformal intervals, **coverage-checked** |
@@ -36,7 +36,7 @@ The pipeline is run on FOODS_3 in California stores. A representative audit:
 - **~54% zero-sales days** — genuinely intermittent demand
 
 That intermittency drives the design: percentage errors (MAPE) are useless, so
-**RMSSE** is the metric; and simple methods are strong, so a **seasonal-naive
+**RMSSE** (M5's per-series scaled error) is the metric; and simple methods are strong, so a **seasonal-naive
 baseline is mandatory** before trusting anything fancier.
 
 ## Headline results (M5 subset, rolling-origin backtest)

@@ -46,16 +46,20 @@ def main():
     keep = sorted(panel["series_id"].unique())[:MAX_SERIES]
     panel = panel[panel["series_id"].isin(keep)].reset_index(drop=True)
 
-    # 2. Backtest the baselines (rolling origin, no leakage)
-    results, summary = backtest_panel(panel, BASELINE_FORECASTERS,
-                                      horizon=HORIZON, n_windows=N_WINDOWS)
-    summary.to_csv(OUTDIR / "backtest_summary.csv", index=False)
-
-    # 3. Global model: one fit on the last-window training data, evaluate on the
-    #    final holdout, compare its RMSSE to the best baseline.
+    # Hold out the final `HORIZON` days as an untouched test set. Everything
+    # before it is used to (a) backtest baselines and (b) pick the best baseline,
+    # so the final holdout never influences model/method selection.
     cutoff = panel["date"].max() - pd.Timedelta(days=HORIZON)
     train_panel = panel[panel["date"] <= cutoff]
     test_panel = panel[panel["date"] > cutoff]
+
+    # 2. Backtest the baselines on the PRE-HOLDOUT data only (rolling origin).
+    results, summary = backtest_panel(train_panel, BASELINE_FORECASTERS,
+                                      horizon=HORIZON, n_windows=N_WINDOWS)
+    summary.to_csv(OUTDIR / "backtest_summary.csv", index=False)
+
+    # 3. Global model + best baseline (selected from the pre-holdout backtest,
+    #    not from the final holdout) evaluated once on the untouched holdout.
     gm = GlobalForecaster(max_iter=150).fit(train_panel)
 
     gm_rmsse, best_base_rmsse = [], []
@@ -66,11 +70,14 @@ def main():
     inv_rows = []
     for sid, g in test_panel.groupby("series_id"):
         hist = train_panel[train_panel["series_id"] == sid]
-        actual = g.sort_values("date")["sales"].to_numpy()
+        g_sorted = g.sort_values("date")
+        actual = g_sorted["sales"].to_numpy()
         train_vals = hist.sort_values("date")["sales"].to_numpy()
         sigma = float(train_vals.std())
 
-        gm_pred = gm.forecast(hist, len(actual))
+        # Pass the real future calendar (dates + SNAP) so the global model uses
+        # correct future features instead of carrying the last day forward.
+        gm_pred = gm.forecast(hist, len(actual), future_calendar=g_sorted)
         base_pred = base_factory().fit(train_vals).predict(len(actual))
 
         gm_rmsse.append(evaluate_forecast(actual, gm_pred, train_vals, period=7)["rmsse"])

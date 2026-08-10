@@ -44,42 +44,70 @@ class GlobalForecaster:
         self._id_col = id_col
         return self
 
-    def forecast(self, series_history: pd.DataFrame, horizon: int) -> np.ndarray:
+    def forecast(self, series_history: pd.DataFrame, horizon: int,
+                 future_calendar: pd.DataFrame = None) -> np.ndarray:
         """
         Recursively forecast one series `horizon` days ahead.
 
-        series_history must contain the columns needed by add_features
-        (date, sales, wday/month optional, snap columns/state optional) up to the
-        cutoff. Predicted values are appended and features recomputed each step.
+        series_history : the series' rows up to the cutoff (date, sales, and the
+            snap_CA/TX/WI + state_id columns if available).
+        future_calendar : optional DataFrame with one row per forecast day,
+            carrying the real calendar for those days — at minimum `date`, and
+            ideally `snap_CA/snap_TX/snap_WI` (and state_id). Supplying it is what
+            lets the model use the correct future SNAP/weekday instead of copying
+            the last observed day. If omitted, dates are generated and SNAP is
+            carried forward (a documented approximation).
+
+        wday and month are always derived from each row's date inside
+        add_features, so future rows get correct calendar values and the model is
+        actually invoked (no silent fallback).
         """
         hist = series_history.sort_values("date").copy()
         vcol = self._value_col
         preds = []
         last_date = hist["date"].max()
 
+        fc = None
+        if future_calendar is not None:
+            fc = future_calendar.sort_values("date").reset_index(drop=True)
+
         for step in range(1, horizon + 1):
-            next_date = last_date + pd.Timedelta(days=step)
+            if fc is not None and step - 1 < len(fc):
+                cal_row = fc.iloc[step - 1]
+                next_date = pd.Timestamp(cal_row["date"])
+            else:
+                cal_row = None
+                next_date = last_date + pd.Timedelta(days=step)
+
             new_row = {
                 "series_id": hist["series_id"].iloc[0] if "series_id" in hist else "s",
                 "date": next_date,
                 vcol: np.nan,
             }
-            # Carry state_id and snap columns forward if present
-            for c in ("state_id", "store_id", "item_id",
-                      "snap_CA", "snap_TX", "snap_WI"):
+            # Static identifiers carried forward
+            for c in ("state_id", "store_id", "item_id"):
                 if c in hist.columns:
                     new_row[c] = hist[c].iloc[-1]
+            # SNAP: take the real future value from the calendar if provided,
+            # otherwise carry the last observed value forward (approximation).
+            for c in ("snap_CA", "snap_TX", "snap_WI"):
+                if cal_row is not None and c in fc.columns:
+                    new_row[c] = cal_row[c]
+                elif c in hist.columns:
+                    new_row[c] = hist[c].iloc[-1]
+
             work = pd.concat([hist, pd.DataFrame([new_row])], ignore_index=True)
             feat = add_features(work, value_col=vcol)
             x_row = feat[FEATURE_COLS].iloc[[-1]].astype(float)
-            # If lags are unavailable (very short history), fall back to last mean
             if x_row.isna().any(axis=1).iloc[0]:
+                # Only reached when lags are genuinely unavailable (very short
+                # history), not because of missing calendar features.
                 yhat = float(np.nanmean(hist[vcol].to_numpy()[-28:]))
             else:
                 yhat = float(self.model.predict(x_row)[0])
-            yhat = max(0.0, yhat)  # demand is non-negative
+            yhat = max(0.0, yhat)
             preds.append(yhat)
-            # Append the prediction as the realized value for the next step
+
             appended = new_row.copy()
             appended[vcol] = yhat
             hist = pd.concat([hist, pd.DataFrame([appended])], ignore_index=True)

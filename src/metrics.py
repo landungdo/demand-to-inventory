@@ -8,10 +8,12 @@ errors and, above all, *scaled* errors:
   MAE, RMSE
     Standard absolute / squared errors, in units of sales.
 
-  RMSSE (Root Mean Squared Scaled Error) — the official M5 metric
-    Scales the forecast's squared error by the in-sample one-step seasonal-naive
-    squared error, so series of different volumes are comparable and a value of
-    1.0 means "as good as a naive random walk on the training data":
+  RMSSE (Root Mean Squared Scaled Error) — the per-series scaled error used
+  in M5 (the competition's official score is the *weighted* mean of these,
+  WRMSSE, with dollar-volume weights across 12 aggregation levels — not computed
+  here). Scaling the squared error by the in-sample one-step naive squared error
+  makes series of different volumes comparable; ~1.0 means "as good as a naive
+  random walk on the training data":
 
         RMSSE = sqrt( mean_h (y_hat - y)^2  /  mean_train (y_t - y_{t-1})^2 )
 

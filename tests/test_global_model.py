@@ -44,3 +44,70 @@ def test_fit_learns_something_better_than_zero():
         errs_model.append(np.mean(np.abs(actual - pred)))
         errs_zero.append(np.mean(np.abs(actual - 0)))
     assert np.mean(errs_model) < np.mean(errs_zero)
+
+
+def _m5_shaped_panel(n_series=6, n_days=300, seed=0):
+    """Build a panel that looks like real M5 output: has wday/month/snap columns
+    already present (this is what triggered the P0 fallback bug)."""
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    dates = pd.date_range("2013-01-01", periods=n_days)
+    frames = []
+    for s in range(n_series):
+        sales = rng.poisson(4 + s, n_days)
+        frames.append(pd.DataFrame({
+            "series_id": f"CA_1__ITEM_{s:03d}",
+            "item_id": f"ITEM_{s:03d}", "store_id": "CA_1", "state_id": "CA",
+            "date": dates, "sales": sales,
+            "wday": dates.weekday + 1, "month": dates.month,
+            "snap_CA": rng.integers(0, 2, n_days),
+            "snap_TX": 0, "snap_WI": 0,
+        }))
+    return pd.concat(frames, ignore_index=True)
+
+
+def test_global_model_actually_called_on_m5_shaped_data(monkeypatch):
+    """
+    Regression test for the P0 bug: on M5-shaped data (wday/month already present)
+    the model's predict() must actually be invoked, not silently bypassed by the
+    short-history fallback.
+    """
+    panel = _m5_shaped_panel(n_series=6, n_days=300, seed=1)
+    cutoff = panel["date"].max() - pd.Timedelta(days=28)
+    train = panel[panel["date"] <= cutoff]
+    gm = GlobalForecaster(max_iter=60).fit(train)
+
+    # Count how many times the underlying model.predict is called
+    calls = {"n": 0}
+    orig_predict = gm.model.predict
+
+    def counting_predict(X):
+        calls["n"] += 1
+        return orig_predict(X)
+
+    monkeypatch.setattr(gm.model, "predict", counting_predict)
+
+    sid = panel["series_id"].iloc[0]
+    hist = train[train["series_id"] == sid]
+    future_cal = panel[(panel["series_id"] == sid) & (panel["date"] > cutoff)]
+    pred = gm.forecast(hist, horizon=28, future_calendar=future_cal)
+
+    assert len(pred) == 28
+    # The model must be called for (nearly) every step — not zero times
+    assert calls["n"] >= 27, f"model.predict called only {calls['n']} times (fallback bug)"
+
+
+def test_future_snap_used_from_calendar():
+    """The forecast should read future SNAP from the provided calendar, not copy
+    the last observed day."""
+    panel = _m5_shaped_panel(n_series=4, n_days=200, seed=2)
+    cutoff = panel["date"].max() - pd.Timedelta(days=14)
+    train = panel[panel["date"] <= cutoff]
+    gm = GlobalForecaster(max_iter=50).fit(train)
+    sid = panel["series_id"].iloc[0]
+    hist = train[train["series_id"] == sid]
+    future_cal = panel[(panel["series_id"] == sid) & (panel["date"] > cutoff)]
+    # Should run without error and use the calendar
+    pred = gm.forecast(hist, horizon=14, future_calendar=future_cal)
+    assert len(pred) == 14
+    assert (pred >= 0).all()
