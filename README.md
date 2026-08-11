@@ -1,6 +1,6 @@
 # Demand-to-Inventory — Retail Forecasting as a Decision System
 
-![tests](https://img.shields.io/badge/tests-46%20passed-brightgreen)
+![tests](https://img.shields.io/badge/tests-53%20passed-brightgreen)
 
 A demand-forecasting project on the **M5 (Walmart) dataset** that does not stop at
 a forecast. It turns forecasts into an **inventory replenishment policy** and
@@ -25,7 +25,7 @@ lend), uplift (estimate effect → target), and here demand (forecast → stock)
 | Backtesting | `src/backtest.py` | **Rolling-origin** evaluation with no leakage |
 | Global model | `src/global_model.py` | One gradient-boosted model across all series, causal lag features |
 | Prediction intervals | `src/intervals.py` | Residual-quantile + split-conformal intervals, **coverage-checked** |
-| Hierarchy | `src/hierarchy.py` | Bottom-up / top-down reconciliation (coherent across item/store/total) |
+| Hierarchy | `src/hierarchy.py` | Bottom-up / top-down reconciliation (coherent across leaf ↔ total; store level not separately modelled) |
 | Inventory decision | `src/inventory.py` | Order-up-to policy, safety stock, **asymmetric-cost simulation** |
 
 ## The data (M5 subset)
@@ -41,16 +41,26 @@ baseline is mandatory** before trusting anything fancier.
 
 ## Headline results (M5 subset, rolling-origin backtest)
 
-Run `python scripts/reproduce.py` to regenerate these into `results/`. On the
-intermittent FOODS series the simple baselines are hard to beat — a moving
-average is often competitive with or better than the global gradient-boosted
-model on RMSSE, which is itself a finding worth stating rather than hiding.
+Run `python scripts/reproduce.py` to regenerate these into `results/`. The
+committed `results/` files are a **sample run on an M5-shaped panel**; running
+the script on the real M5 CSVs overwrites them.
 
-**Accuracy is not cost.** The inventory simulation prices each forecaster's
-policy under holding vs stockout costs. As the stockout penalty rises, a
-forecaster that carries more buffer (worse point accuracy) can become the
-cheaper policy — so the model you deploy depends on the cost structure, not the
-error metric alone.
+A representative run shows the project's central point directly — the accuracy
+ranking and the cost ranking **disagree**:
+
+| Method | RMSSE (accuracy) | Inventory cost | Fill rate |
+|---|---|---|---|
+| Moving-average baseline | **0.78** (better) | 1328 | 99% |
+| Global gradient-boosted | 0.81 | **1271** (cheaper) | 98% |
+
+The moving-average has the better forecast error, yet the global model produces
+the **cheaper inventory policy** under these holding/stockout costs. Lower RMSSE
+did not win the decision — which is the whole argument for scoring forecasts by
+their downstream cost, not error alone. (Exact numbers depend on the subset and
+cost parameters; see `results/metrics.json`.)
+
+On the intermittent FOODS series the simple baselines are genuinely hard to beat
+on RMSSE — itself a finding worth stating rather than hiding.
 
 ## Two methodological commitments (shared with the other projects)
 

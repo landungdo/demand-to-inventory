@@ -46,3 +46,19 @@ def test_mean_rmsse_ignores_nan_and_weights():
     assert abs(mean_rmsse(vals) - 1.5) < 1e-9
     # Weighted: put all weight on the 2.0
     assert abs(mean_rmsse([1.0, 2.0], weights=[0, 1]) - 2.0) < 1e-9
+
+
+def test_rmsse_m5_excludes_leading_zeros():
+    from src.metrics import rmsse_m5, rmsse
+    # Leading zeros before first sale should not count toward the scale
+    y_train = np.array([0, 0, 0, 5, 3, 8, 2, 6, 4, 7], dtype=float)
+    y_true = np.array([5, 5])
+    y_pred = np.array([7, 7])
+    # rmsse_m5 differs from naive period=1 over the full history
+    assert rmsse_m5(y_true, y_pred, y_train) != rmsse(y_true, y_pred, y_train, period=1)
+
+
+def test_rmsse_m5_perfect_is_zero():
+    from src.metrics import rmsse_m5
+    y_train = np.array([0, 0, 5, 3, 8, 2, 6], dtype=float)
+    assert rmsse_m5(np.array([4, 4]), np.array([4, 4]), y_train) == 0.0

@@ -66,6 +66,40 @@ def make_interval(point_pred: np.ndarray, q_lo: np.ndarray, q_hi: np.ndarray):
     return lower, upper
 
 
+def split_conformal_interval(residuals: np.ndarray, point_pred: np.ndarray,
+                             alpha: float = 0.1, cal_frac: float = 0.5):
+    """
+    Proper split-conformal interval.
+
+    The residual windows are split into two disjoint folds:
+      - a CALIBRATION fold used to compute the conformal quantile of the
+        absolute (per-step) residuals,
+      - the remaining fold is never used here (the caller evaluates coverage on
+        genuinely held-out data), so calibration and evaluation do not share
+        samples — unlike a heuristic that reuses one residual sample for
+        quantile, scale, and coverage all at once.
+
+    Returns (lower, upper) for the given point forecast.
+    """
+    resid = residuals[~np.isnan(residuals).any(axis=1)]
+    if len(resid) < 2:
+        # Not enough to split; fall back to symmetric residual quantiles
+        q_lo, q_hi = residual_quantiles(residuals, alpha=alpha)
+        return make_interval(point_pred, q_lo[:len(point_pred)], q_hi[:len(point_pred)])
+
+    n_cal = max(1, int(round(len(resid) * cal_frac)))
+    cal = resid[:n_cal]
+    # Conformal quantile of absolute residuals per step, with finite-sample
+    # correction ceil((n+1)(1-alpha))/n.
+    n = len(cal)
+    level = min(1.0, np.ceil((n + 1) * (1 - alpha)) / n)
+    abs_q = np.nanquantile(np.abs(cal), level, axis=0)
+    h = len(point_pred)
+    lower = np.clip(point_pred - abs_q[:h], 0, None)
+    upper = np.clip(point_pred + abs_q[:h], 0, None)
+    return lower, upper
+
+
 def coverage(actual: np.ndarray, lower: np.ndarray, upper: np.ndarray) -> float:
     """Fraction of actual values falling within [lower, upper]."""
     actual = np.asarray(actual)

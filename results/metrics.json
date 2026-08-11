@@ -1,0 +1,30 @@
+{
+  "audit": {
+    "n_series": 823,
+    "n_rows": 1597443,
+    "date_min": "2011-01-29",
+    "date_max": "2016-05-22",
+    "days_per_series_min": 1941,
+    "days_per_series_max": 1941,
+    "zero_sales_share": 0.5304602417738848,
+    "mean_daily_sales": 2.5001417890967,
+    "median_daily_sales": 0.0,
+    "any_missing_dates": false
+  },
+  "n_series_used": 100,
+  "backtest_rmsse": {
+    "moving_avg_28": 0.843732027230582,
+    "seasonal_naive": 1.0637180388560508,
+    "naive": 1.157211237253703
+  },
+  "global_rmsse_mean": 0.7737090414946906,
+  "best_baseline": "moving_avg_28",
+  "best_baseline_rmsse_mean": 0.7072471911730716,
+  "inventory_cost": {
+    "global": 570.0204691627047,
+    "moving_avg_28": 620.7005354227406
+  },
+  "interval_mean_coverage_nominal_90": 0.7025,
+  "hierarchy_bottom_up_coherent": true,
+  "hierarchy_total_forecast_day0": 238.843713294876
+}

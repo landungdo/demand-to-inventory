@@ -1,0 +1,18 @@
+{
+  "note": "SAMPLE results on synthetic M5-shaped panel; run scripts/reproduce.py on real M5 to overwrite",
+  "n_series_used": 80,
+  "backtest_rmsse": {
+    "moving_avg_28": 0.8047555967110566,
+    "seasonal_naive": 1.083593020108967,
+    "naive": 1.2000728268122327
+  },
+  "global_rmsse_mean": 0.8075233313443265,
+  "best_baseline": "moving_avg_28",
+  "best_baseline_rmsse_mean": 0.7783071243364516,
+  "inventory_cost": {
+    "global": 1271.3662717091138,
+    "moving_avg_28": 1328.1727993029278
+  },
+  "interval_mean_coverage_nominal_90": 0.70625,
+  "hierarchy_bottom_up_coherent": true
+}

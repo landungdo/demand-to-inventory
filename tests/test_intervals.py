@@ -64,3 +64,23 @@ def test_conformal_widening_raises_coverage():
     cov_1 = ((resid >= 1.0*lo) & (resid <= 1.0*hi)).mean()
     cov_2 = ((resid >= 2.0*lo) & (resid <= 2.0*hi)).mean()
     assert cov_2 >= cov_1
+
+
+def test_split_conformal_returns_valid_interval():
+    from src.intervals import split_conformal_interval
+    resid = np.random.default_rng(0).normal(0, 2, size=(40, 14))
+    point = np.full(14, 5.0)
+    lo, hi = split_conformal_interval(resid, point, alpha=0.1)
+    assert (lo <= hi).all()
+    assert (lo >= 0).all()
+    assert len(lo) == 14
+
+
+def test_split_conformal_wider_for_smaller_alpha():
+    from src.intervals import split_conformal_interval
+    resid = np.random.default_rng(1).normal(0, 2, size=(60, 10))
+    point = np.full(10, 8.0)
+    lo90, hi90 = split_conformal_interval(resid, point, alpha=0.1)
+    lo99, hi99 = split_conformal_interval(resid, point, alpha=0.01)
+    # 99% interval should be at least as wide as 90%
+    assert (hi99 - lo99).mean() >= (hi90 - lo90).mean()

@@ -58,6 +58,25 @@ def rmsse(y_true, y_pred, y_train, period: int = 1) -> float:
     return float(np.sqrt(num / scale))
 
 
+def rmsse_m5(y_true, y_pred, y_train) -> float:
+    """
+    M5-style RMSSE: the scale is the mean squared *one-step* (period=1) naive
+    error, computed only from the point each series starts selling (M5 excludes
+    the leading zeros before a product's first sale). This matches the M5
+    per-series scaled error; the competition's official score additionally takes
+    a dollar-volume-weighted mean of these across 12 aggregation levels (WRMSSE),
+    which is not computed here.
+    """
+    y_train = np.asarray(y_train, dtype=float)
+    # Drop leading zeros: start the scale window at the first nonzero sale
+    nz = np.nonzero(y_train > 0)[0]
+    if len(nz) > 0:
+        y_scale = y_train[nz[0]:]
+    else:
+        y_scale = y_train
+    return rmsse(y_true, y_pred, y_scale, period=1)
+
+
 def evaluate_forecast(y_true, y_pred, y_train, period: int = 1) -> dict:
     """All three metrics for one forecast."""
     return {

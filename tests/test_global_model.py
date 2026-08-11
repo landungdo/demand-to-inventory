@@ -97,17 +97,33 @@ def test_global_model_actually_called_on_m5_shaped_data(monkeypatch):
     assert calls["n"] >= 27, f"model.predict called only {calls['n']} times (fallback bug)"
 
 
-def test_future_snap_used_from_calendar():
-    """The forecast should read future SNAP from the provided calendar, not copy
-    the last observed day."""
+def test_future_snap_used_from_calendar(monkeypatch):
+    """The forecast should read future SNAP from the provided calendar and pass
+    it into the model — verified by spying on model.predict and checking the snap
+    feature column matches the future calendar's SNAP for each step."""
     panel = _m5_shaped_panel(n_series=4, n_days=200, seed=2)
     cutoff = panel["date"].max() - pd.Timedelta(days=14)
     train = panel[panel["date"] <= cutoff]
     gm = GlobalForecaster(max_iter=50).fit(train)
     sid = panel["series_id"].iloc[0]
     hist = train[train["series_id"] == sid]
-    future_cal = panel[(panel["series_id"] == sid) & (panel["date"] > cutoff)]
-    # Should run without error and use the calendar
-    pred = gm.forecast(hist, horizon=14, future_calendar=future_cal)
-    assert len(pred) == 14
-    assert (pred >= 0).all()
+    future_cal = panel[(panel["series_id"] == sid) & (panel["date"] > cutoff)].sort_values("date")
+
+    # SNAP is the last feature column (see FEATURE_COLS order); capture it per call
+    from src.features import FEATURE_COLS
+    snap_idx = FEATURE_COLS.index("snap")
+    seen_snap = []
+    orig = gm.model.predict
+
+    def spy(X):
+        seen_snap.append(float(X.iloc[0, snap_idx]))
+        return orig(X)
+
+    monkeypatch.setattr(gm.model, "predict", spy)
+    gm.forecast(hist, horizon=14, future_calendar=future_cal)
+
+    expected_snap = future_cal["snap_CA"].to_numpy(dtype=float)
+    # Each step's snap feature should match the future calendar's snap_CA
+    assert len(seen_snap) >= 13
+    for i, s in enumerate(seen_snap):
+        assert s == expected_snap[i], f"step {i}: snap {s} != calendar {expected_snap[i]}"

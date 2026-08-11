@@ -23,11 +23,16 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.m5_data import build_panel, audit
-from src.baselines import BASELINE_FORECASTERS
+from src.baselines import BASELINE_FORECASTERS, MovingAverageForecaster
 from src.backtest import backtest_panel
 from src.global_model import GlobalForecaster
-from src.metrics import evaluate_forecast
+from src.metrics import evaluate_forecast, rmsse_m5
 from src.inventory import simulate_inventory
+from src.intervals import (
+    collect_residuals_by_step, residual_quantiles, make_interval,
+    conformal_scale, coverage,
+)
+from src.hierarchy import bottom_up, is_coherent
 
 OUTDIR = Path("results")
 HORIZON = 28
@@ -66,26 +71,50 @@ def main():
     best_base = summary.iloc[0]["method"]
     base_factory = BASELINE_FORECASTERS[best_base]
 
-    # For the accuracy-vs-cost story, also accumulate inventory cost per method
+    # For the accuracy-vs-cost story, also accumulate inventory cost per method.
+    # The inventory buffer uses uncertainty from a CALIBRATED prediction interval
+    # (residual quantiles + split-conformal), not just the raw historical stdev,
+    # so forecast -> uncertainty -> inventory is one connected pipeline.
     inv_rows = []
+    coverage_records = []
+    leaf_forecasts_gm = {}   # for hierarchy reconciliation
+    leaf_history = {}
     for sid, g in test_panel.groupby("series_id"):
         hist = train_panel[train_panel["series_id"] == sid]
         g_sorted = g.sort_values("date")
         actual = g_sorted["sales"].to_numpy()
         train_vals = hist.sort_values("date")["sales"].to_numpy()
-        sigma = float(train_vals.std())
 
-        # Pass the real future calendar (dates + SNAP) so the global model uses
-        # correct future features instead of carrying the last day forward.
         gm_pred = gm.forecast(hist, len(actual), future_calendar=g_sorted)
         base_pred = base_factory().fit(train_vals).predict(len(actual))
 
-        gm_rmsse.append(evaluate_forecast(actual, gm_pred, train_vals, period=7)["rmsse"])
-        best_base_rmsse.append(evaluate_forecast(actual, base_pred, train_vals, period=7)["rmsse"])
+        gm_rmsse.append(rmsse_m5(actual, gm_pred, train_vals))
+        best_base_rmsse.append(rmsse_m5(actual, base_pred, train_vals))
+
+        leaf_forecasts_gm[sid] = gm_pred
+        leaf_history[sid] = train_vals
+
+        # Calibrated interval on the training history -> sigma-equivalent buffer
+        resid = collect_residuals_by_step(
+            train_vals, lambda: MovingAverageForecaster(28),
+            horizon=HORIZON, n_windows=4)
+        cov_here = np.nan
+        if len(resid) >= 2:
+            q_lo, q_hi = residual_quantiles(resid, alpha=0.1)
+            s = conformal_scale(resid, q_lo, q_hi, target=0.9)
+            base_fc = base_factory().fit(train_vals).predict(len(actual))
+            lower, upper = make_interval(base_fc, s * q_lo[:len(actual)],
+                                         s * q_hi[:len(actual)])
+            cov_here = coverage(actual, lower, upper)
+            coverage_records.append(cov_here)
+            # Interval half-width as an uncertainty proxy for safety stock
+            interval_sigma = float(np.mean(upper - lower) / 3.29)  # ~90% z-range
+        else:
+            interval_sigma = float(train_vals.std())
 
         for name, pred in [("global", gm_pred), (best_base, base_pred)]:
             fc_daily = float(np.mean(pred))
-            r = simulate_inventory(actual, fc_daily, sigma, z=1.04,
+            r = simulate_inventory(actual, fc_daily, interval_sigma, z=1.04,
                                    holding_cost=1.0, stockout_cost=8.0)
             inv_rows.append({"series_id": sid, "method": name,
                              "total_cost": r["total_cost"],
@@ -94,6 +123,14 @@ def main():
     inv = pd.DataFrame(inv_rows)
     inv_summary = inv.groupby("method")[["total_cost", "fill_rate"]].mean().reset_index()
     inv_summary.to_csv(OUTDIR / "inventory_summary.csv", index=False)
+
+    # 4. Hierarchical reconciliation: bottom-up the leaf (global) forecasts to a
+    #    coherent total, and confirm coherence.
+    bu = bottom_up(leaf_forecasts_gm)
+    reconciliation_coherent = bool(is_coherent(bu))
+    total_forecast_day0 = float(bu["total"][0])
+
+    mean_coverage = float(np.nanmean(coverage_records)) if coverage_records else float("nan")
 
     metrics = {
         "audit": info,
@@ -104,6 +141,9 @@ def main():
         "best_baseline_rmsse_mean": float(np.nanmean(best_base_rmsse)),
         "inventory_cost": {r["method"]: float(r["total_cost"])
                            for _, r in inv_summary.iterrows()},
+        "interval_mean_coverage_nominal_90": mean_coverage,
+        "hierarchy_bottom_up_coherent": reconciliation_coherent,
+        "hierarchy_total_forecast_day0": total_forecast_day0,
     }
     with open(OUTDIR / "metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
@@ -114,9 +154,11 @@ def main():
           f"(zero-sales share {info['zero_sales_share']:.0%})\n")
     print("Backtest RMSSE (rolling origin, lower better):")
     print(summary.to_string(index=False))
-    print(f"\nGlobal model mean RMSSE:   {metrics['global_rmsse_mean']:.3f}")
+    print(f"\nGlobal model mean RMSSE (M5-style): {metrics['global_rmsse_mean']:.3f}")
     print(f"Best baseline ({best_base}) mean RMSSE: {metrics['best_baseline_rmsse_mean']:.3f}")
-    print("\nInventory cost per method (holding=1, stockout=8):")
+    print(f"\nInterval mean coverage (nominal 90%): {mean_coverage:.0%}")
+    print(f"Hierarchy bottom-up coherent: {reconciliation_coherent}")
+    print("\nInventory cost per method (holding=1, stockout=8, buffer from calibrated interval):")
     print(inv_summary.to_string(index=False))
     print("\nKey point: compare the RMSSE ranking with the inventory-cost ranking —")
     print("the most accurate forecaster is not always the cheapest policy.")
